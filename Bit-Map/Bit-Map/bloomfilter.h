@@ -43,23 +43,28 @@ static const unsigned char bit_mask[bits_per_char] = {
 													   0x80   //10000000
 };
 
+//布隆过滤器参数
 class bloom_parameters
 {
 public:
-
+	//初始化参数
 	bloom_parameters()
 		: minimum_size(1),
+		//std::numeric_limits模板库，存储数据类型的存储边界
 		maximum_size(std::numeric_limits<unsigned long long int>::max()),
 		minimum_number_of_hashes(1),
 		maximum_number_of_hashes(std::numeric_limits<unsigned int>::max()),
 		projected_element_count(10000),
 		false_positive_probability(1.0 / projected_element_count),
-		random_seed(0xA5A5A5A55A5A5A5AULL)
+		//ULL:unsigned long long
+		random_seed(0xA5A5A5A55A5A5A5AULL)//1010 0101 ... 0101 1010
+										  //  A    5        5    A
 	{}
 
 	virtual ~bloom_parameters()
 	{}
 
+	//重载!运算符，参数初始化不符合要求
 	inline bool operator!()
 	{
 		return (minimum_size > maximum_size) ||
@@ -68,6 +73,7 @@ public:
 			(0 == maximum_number_of_hashes) ||
 			(0 == projected_element_count) ||
 			(false_positive_probability < 0.0) ||
+			//概率绝对值与double类型的正无穷大相等
 			(std::numeric_limits<double>::infinity() == std::abs(false_positive_probability)) ||
 			(0 == random_seed) ||
 			(0xFFFFFFFFFFFFFFFFULL == random_seed);
@@ -116,6 +122,7 @@ public:
 		  and estimated element insertion count.
 		*/
 
+		//参数不符合要求，直接返回false
 		if (!(*this))
 			return false;
 
@@ -123,6 +130,9 @@ public:
 		double min_k = 0.0;
 		double k = 1.0;
 
+		//误判率P=pow((1-exp(-k*n/m)),k),现在给定
+		//误判率P,数据个数n，遍历哈希函数个数k，选择最小的位数组长度m
+		//即m=-k*n/log(1-pow(p,1/k))
 		while (k < 1000.0)
 		{
 			const double numerator = (-k * projected_element_count);
@@ -144,9 +154,10 @@ public:
 		optp.number_of_hashes = static_cast<unsigned int>(min_k);
 
 		optp.table_size = static_cast<unsigned long long int>(min_m);
-
+		//补足位数组长度为bits_per_char的倍数
 		optp.table_size += (((optp.table_size % bits_per_char) != 0) ? (bits_per_char - (optp.table_size % bits_per_char)) : 0);
 
+		//根据用户初始化参数选择hash函数个数和位数组长度，原则：小小取小（小于最小值取最小值），大大取大
 		if (optp.number_of_hashes < minimum_number_of_hashes)
 			optp.number_of_hashes = minimum_number_of_hashes;
 		else if (optp.number_of_hashes > maximum_number_of_hashes)
@@ -162,6 +173,7 @@ public:
 
 };
 
+//布隆过滤器
 class bloom_filter
 {
 protected:
@@ -184,6 +196,7 @@ public:
 	bloom_filter(const bloom_parameters& p)
 		: projected_element_count_(p.projected_element_count),
 		inserted_element_count_(0),
+		//random_seed(0xA5A5A5A55A5A5A5AULL)--question
 		random_seed_((p.random_seed * 0xA5A5A5A5) + 1),
 		desired_false_positive_probability_(p.false_positive_probability)
 	{
@@ -192,6 +205,7 @@ public:
 
 		generate_unique_salt();
 
+		//重设位数组长度
 		bit_table_.resize(table_size_ / bits_per_char, static_cast<unsigned char>(0x00));
 	}
 
@@ -200,6 +214,7 @@ public:
 		this->operator=(filter);
 	}
 
+	//重载相等判定符，判定两个filter参数是否一样
 	inline bool operator == (const bloom_filter& f) const
 	{
 		if (this != &f)
@@ -219,11 +234,13 @@ public:
 			return true;
 	}
 
+	//重载不等判定符，判定两个filter参数是否一样
 	inline bool operator != (const bloom_filter& f) const
 	{
 		return !operator==(f);
 	}
 
+	//重载赋值符号，能够从另一个过滤器中复制相应的参数
 	inline bloom_filter& operator = (const bloom_filter& f)
 	{
 		if (this != &f)
@@ -247,32 +264,38 @@ public:
 	virtual ~bloom_filter()
 	{}
 
+	//返回元素个数是否为0，即位数组是否初始化
 	inline bool operator!() const
 	{
 		return (0 == table_size_);
 	}
 
+	//清空位数组，设置已插入元素个数为0
 	inline void clear()
 	{
 		std::fill(bit_table_.begin(), bit_table_.end(), static_cast<unsigned char>(0x00));
 		inserted_element_count_ = 0;
 	}
 
+	//插入元素，提供const unsigned char*起始指针和长度
 	inline void insert(const unsigned char* key_begin, const std::size_t& length)
 	{
 		std::size_t bit_index = 0;
 		std::size_t bit = 0;
 
+		//遍历随机数组构造哈希函数进行计算
 		for (std::size_t i = 0; i < salt_.size(); ++i)
 		{
+			//计算哈希值对应的bit_index(第xx个数)，bit(位数组某一项的第x位)
 			compute_indices(hash_ap(key_begin, length, salt_[i]), bit_index, bit);
-
+			//将位数组的第bit_index / bits_per_char位置的第bit位置1
 			bit_table_[bit_index / bits_per_char] |= bit_mask[bit];
 		}
-
+		//插入元素个数加1
 		++inserted_element_count_;
 	}
 
+	//插入模板，接受模板元素起始位置和长度
 	template <typename T>
 	inline void insert(const T& t)
 	{
@@ -280,16 +303,19 @@ public:
 		insert(reinterpret_cast<const unsigned char*>(&t), sizeof(T));
 	}
 
+	//插入元素，提供string
 	inline void insert(const std::string& key)
 	{
 		insert(reinterpret_cast<const unsigned char*>(key.data()), key.size());
 	}
 
+	//插入元素，提供const char*
 	inline void insert(const char* data, const std::size_t& length)
 	{
 		insert(reinterpret_cast<const unsigned char*>(data), length);
 	}
 
+	//输入模板，接受迭代器插入元素
 	template <typename InputIterator>
 	inline void insert(const InputIterator begin, const InputIterator end)
 	{
@@ -301,6 +327,7 @@ public:
 		}
 	}
 
+	//检查元素是否在布隆过滤器中，接受元素起始位置和长度
 	inline virtual bool contains(const unsigned char* key_begin, const std::size_t length) const
 	{
 		std::size_t bit_index = 0;
@@ -310,6 +337,7 @@ public:
 		{
 			compute_indices(hash_ap(key_begin, length, salt_[i]), bit_index, bit);
 
+			//只要有一个哈希函数计算结果不为1，返回false
 			if ((bit_table_[bit_index / bits_per_char] & bit_mask[bit]) != bit_mask[bit])
 			{
 				return false;
@@ -319,22 +347,27 @@ public:
 		return true;
 	}
 
+	//检查模板，接受模板元素起始位置和长度
 	template <typename T>
 	inline bool contains(const T& t) const
 	{
 		return contains(reinterpret_cast<const unsigned char*>(&t), static_cast<std::size_t>(sizeof(T)));
 	}
 
+	//检查元素，提供string
 	inline bool contains(const std::string& key) const
 	{
 		return contains(reinterpret_cast<const unsigned char*>(key.c_str()), key.size());
 	}
 
+	//检查元素，提供const char*
 	inline bool contains(const char* data, const std::size_t& length) const
 	{
 		return contains(reinterpret_cast<const unsigned char*>(data), length);
 	}
 
+	//检查模板，接受迭代器检查全部的元素，
+	//返回第一个不在过滤器中的元素迭代器对象或迭代器末尾对象（全在过滤器中）
 	template <typename InputIterator>
 	inline InputIterator contains_all(const InputIterator begin, const InputIterator end) const
 	{
@@ -353,6 +386,8 @@ public:
 		return end;
 	}
 
+	//检查模板，接受迭代器检查全部的元素，
+	//返回第一个在过滤器中的元素迭代器对象或迭代器末尾对象（全不在过滤器中）
 	template <typename InputIterator>
 	inline InputIterator contains_none(const InputIterator begin, const InputIterator end) const
 	{
@@ -371,16 +406,19 @@ public:
 		return end;
 	}
 
+	//返回位数组长度
 	inline virtual unsigned long long int size() const
 	{
 		return table_size_;
 	}
 
+	//返回已插入元素个数
 	inline unsigned long long int element_count() const
 	{
 		return inserted_element_count_;
 	}
 
+	//计算实际的误判率，用实际已插入的元素个数代替预设的元素个数
 	inline double effective_fpp() const
 	{
 		/*
@@ -390,9 +428,12 @@ public:
 		  the current number of inserted elements - not the user defined
 		  predicated/expected number of inserted elements.
 		*/
+		//P=pow(1-exp(pow(-k*n/m)),k)
 		return std::pow(1.0 - std::exp(-1.0 * salt_.size() * inserted_element_count_ / size()), 1.0 * salt_.size());
 	}
 
+	//重载&=符号，求两个过滤器的交集，即求两个过滤器共有的元素
+	//前提：两个过滤器的哈希函数个数，位数组长度，随机种子相同
 	inline bloom_filter& operator &= (const bloom_filter& f)
 	{
 		/* intersection */
@@ -411,6 +452,8 @@ public:
 		return *this;
 	}
 
+	//重载|=符号，求两个过滤器的并集，即合并两个过滤器中的元素
+	//前提：两个过滤器的哈希函数个数，位数组长度，随机种子相同
 	inline bloom_filter& operator |= (const bloom_filter& f)
 	{
 		/* union */
@@ -429,6 +472,8 @@ public:
 		return *this;
 	}
 
+	//重载^=符号，求两个过滤器的差集，即this过滤器除去f中的元素
+	//前提：两个过滤器的哈希函数个数，位数组长度，随机种子相同
 	inline bloom_filter& operator ^= (const bloom_filter& f)
 	{
 		/* difference */
@@ -447,11 +492,13 @@ public:
 		return *this;
 	}
 
+	//返回位数组头指针
 	inline const cell_type* table() const
 	{
 		return bit_table_.data();
 	}
 
+	//返回哈希函数个数
 	inline std::size_t hash_count()
 	{
 		return salt_.size();
@@ -459,6 +506,7 @@ public:
 
 protected:
 
+	//根据哈希值计算需要置1的位数组index（即转化为第xx个数）和相应的bit位
 	inline virtual void compute_indices(const bloom_type& hash, std::size_t& bit_index, std::size_t& bit) const
 	{
 		bit_index = hash % table_size_;
@@ -513,8 +561,10 @@ protected:
 
 		if (salt_count_ <= predef_salt_count)
 		{
+			//左闭右开，第三个参数是提供另一个有序组的头地址
 			std::copy(predef_salt,
 				predef_salt + salt_count_,
+				//插入型迭代器
 				std::back_inserter(salt_));
 
 			for (std::size_t i = 0; i < salt_.size(); ++i)
@@ -525,11 +575,13 @@ protected:
 				   so as to allow for the generation of unique bloom filter
 				   instances.
 				*/
+				//question
 				salt_[i] = salt_[i] * salt_[(i + 3) % salt_.size()] + static_cast<bloom_type>(random_seed_);
 			}
 		}
 		else
 		{
+			//程序中自定义的salt(128个)不够
 			std::copy(predef_salt, predef_salt + predef_salt_count, std::back_inserter(salt_));
 
 			srand(static_cast<unsigned int>(random_seed_));
@@ -541,6 +593,7 @@ protected:
 				if (0 == current_salt)
 					continue;
 
+				//salt_中最后一个数与当前生成的不同时，插入，即没有位置相邻数值相同的随机数
 				if (salt_.end() == std::find(salt_.begin(), salt_.end(), current_salt))
 				{
 					salt_.push_back(current_salt);
@@ -549,24 +602,30 @@ protected:
 		}
 	}
 
+	//哈希值计算，提供元素起始地址，长度和哈希类型（随机数组中的一项）
 	inline bloom_type hash_ap(const unsigned char* begin, std::size_t remaining_length, bloom_type hash) const
 	{
 		const unsigned char* itr = begin;
 		unsigned int loop = 0;
 
+		//元素长度大于8个字节
 		while (remaining_length >= 8)
 		{
+			//unsigned int 4个字节，获取元素的前八个字节并分解为两个unsigned int
 			const unsigned int& i1 = *(reinterpret_cast<const unsigned int*>(itr)); itr += sizeof(unsigned int);
 			const unsigned int& i2 = *(reinterpret_cast<const unsigned int*>(itr)); itr += sizeof(unsigned int);
 
+			//四字节（32位）的哈希数，question:哈希函数定义
 			hash ^= (hash << 7) ^ i1 * (hash >> 3) ^
 				(~((hash << 11) + (i2 ^ (hash >> 5))));
 
 			remaining_length -= 8;
 		}
 
+		//元素长度小于8或已有部分进行hash,剩余部分长度小于8
 		if (remaining_length)
 		{
+			//元素长度大于4，截取前四个元素作为unsigned int,根据是前四个还是后四个选择相应的哈希函数
 			if (remaining_length >= 4)
 			{
 				const unsigned int& i = *(reinterpret_cast<const unsigned int*>(itr));
@@ -582,7 +641,7 @@ protected:
 
 				itr += sizeof(unsigned int);
 			}
-
+			//元素长度大于2，截取前2个元素作为unsigned short,根据是前四个还是后四个选择相应的哈希函数
 			if (remaining_length >= 2)
 			{
 				const unsigned short& i = *(reinterpret_cast<const unsigned short*>(itr));
@@ -598,7 +657,7 @@ protected:
 
 				itr += sizeof(unsigned short);
 			}
-
+			//元素长度为1
 			if (remaining_length)
 			{
 				hash += ((*itr) ^ (hash * 0xA5A5A5A5)) + loop;
@@ -608,16 +667,17 @@ protected:
 		return hash;
 	}
 
-	std::vector<bloom_type>    salt_;
-	std::vector<unsigned char> bit_table_;
-	unsigned int               salt_count_;
-	unsigned long long int     table_size_;
-	unsigned long long int     projected_element_count_;
-	unsigned long long int     inserted_element_count_;
-	unsigned long long int     random_seed_;
-	double                     desired_false_positive_probability_;
+	std::vector<bloom_type>    salt_;	//随机数组（哈希函数相关）
+	std::vector<unsigned char> bit_table_;	//位数组
+	unsigned int               salt_count_;	//随机数组长度
+	unsigned long long int     table_size_;	//元素个数
+	unsigned long long int     projected_element_count_;	//预设元素个数
+	unsigned long long int     inserted_element_count_;		//已插入元素个数
+	unsigned long long int     random_seed_;	//随机种子
+	double                     desired_false_positive_probability_;	//误判率
 };
 
+//重载&运算符，返回两个布隆过滤器的交集
 inline bloom_filter operator & (const bloom_filter& a, const bloom_filter& b)
 {
 	bloom_filter result = a;
@@ -625,6 +685,7 @@ inline bloom_filter operator & (const bloom_filter& a, const bloom_filter& b)
 	return result;
 }
 
+//重载|运算符，返回两个布隆过滤器的并集
 inline bloom_filter operator | (const bloom_filter& a, const bloom_filter& b)
 {
 	bloom_filter result = a;
@@ -632,6 +693,7 @@ inline bloom_filter operator | (const bloom_filter& a, const bloom_filter& b)
 	return result;
 }
 
+//重载^运算符，返回两个布隆过滤器的差集
 inline bloom_filter operator ^ (const bloom_filter& a, const bloom_filter& b)
 {
 	bloom_filter result = a;
@@ -639,20 +701,23 @@ inline bloom_filter operator ^ (const bloom_filter& a, const bloom_filter& b)
 	return result;
 }
 
+//public继承布隆过滤器，得到可压缩的布隆过滤器
 class compressible_bloom_filter : public bloom_filter
 {
 public:
-
+	//通过布隆过滤器参数构造布隆过滤器，并将其位长度转入位长度列表
 	compressible_bloom_filter(const bloom_parameters& p)
 		: bloom_filter(p)
 	{
 		size_list.push_back(table_size_);
 	}
 
+	//获得最后一个位长度
 	inline unsigned long long int size() const
 	{
 		return size_list.back();
 	}
+
 
 	inline bool compress(const double& percentage)
 	{
@@ -664,11 +729,14 @@ public:
 			return false;
 		}
 
+		//获得原始位长度，使用压缩率计算新的位长度
 		unsigned long long int original_table_size = size_list.back();
 		unsigned long long int new_table_size = static_cast<unsigned long long int>((size_list.back() * (1.0 - (percentage / 100.0))));
 
+		//使位长度能被bits_per_char整除
 		new_table_size -= new_table_size % bits_per_char;
 
+		//新的位长度比bits_per_char还小或比原来位长度还大（无法压缩）
 		if (
 			(bits_per_char > new_table_size) ||
 			(new_table_size >= original_table_size)
@@ -677,14 +745,17 @@ public:
 			return false;
 		}
 
+		//计算实际的误判率
 		desired_false_positive_probability_ = effective_fpp();
 
+		//使用压缩后的位长度构建新的位数组，并将原位数组的前面一部分拷贝进去
 		const unsigned long long int new_tbl_raw_size = new_table_size / bits_per_char;
 
 		table_type tmp(new_tbl_raw_size);
 
 		std::copy(bit_table_.begin(), bit_table_.begin() + new_tbl_raw_size, tmp.begin());
 
+		//使用迭代器拷贝原位数组的后面部分，与前面部分求并，question(后半部分较大，产生内存覆盖)
 		typedef table_type::iterator itr_t;
 
 		itr_t itr = bit_table_.begin() + (new_table_size / bits_per_char);
@@ -705,10 +776,12 @@ public:
 
 private:
 
+	//重写父类中哈希值计算需要置1的位数组index（即转化为第xx个数）和相应的bit位
 	inline void compute_indices(const bloom_type& hash, std::size_t& bit_index, std::size_t& bit) const
 	{
 		bit_index = hash;
 
+		//对位长度列表中的每个位长度循环求余，可得到该哈希值的相应位置
 		for (std::size_t i = 0; i < size_list.size(); ++i)
 		{
 			bit_index %= size_list[i];
@@ -717,7 +790,7 @@ private:
 		bit = bit_index % bits_per_char;
 	}
 
-	std::vector<unsigned long long int> size_list;
+	std::vector<unsigned long long int> size_list;	//位长度存储列表
 };
 
 #endif
